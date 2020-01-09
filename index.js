@@ -37,6 +37,56 @@ app.get('/', (req, res) => {
     })
         .catch(err => console.log(err))
 });
+app.get('/phone-models', (req, res) => {
+    const session = driver.session();
+    let promise = session
+        .run('match (a:Phone) return a');
+    promise.then((result) => {
+        session.close();
+        if (result.records.length < 1) {
+            res.status(404).send('Not Found');
+            return;
+        }
+        let returnArr = [];
+        result.records.map(result => {
+            returnArr.push(result.get(0).properties.name);
+        });
+        res.status(200).send(JSON.stringify(returnArr))
+    })
+        .catch(err => console.log(err));
+
+
+});
+
+app.post('/update', (req, res) => {
+    let email = req.body.email;
+    let firstName = req.body.firstName;
+    let lastName = req.body.lastName;
+    let phone = req.body.phone;
+    let id = req.body.id;
+
+    console.log(req.body);
+    const session = driver.session();
+    let promise = session
+        .run('match (a:Buyer) where id(a)={id} set a.firstName={firstName}, a.lastName={lastName}, a.email={email}, a.phone={phone} return id(a), a', {
+            id,
+            firstName,
+            lastName,
+            email,
+            phone
+        });
+    promise.then((result) => {
+        session.close();
+        if (result.records.length < 1) {
+            res.status(404).send('Not Found');
+            return;
+        }
+        let user = {id: result.records[0].get(0).low, ...result.records[0].get(1).properties};
+        res.status(200).send(JSON.stringify(user));
+    })
+        .catch(err => console.log(err));
+
+});
 
 app.post('/register', (req, res) => {
     let password = req.body.password;
@@ -51,15 +101,15 @@ app.post('/register', (req, res) => {
             email,
             password
         });
-        promise.then((result) => {
-            session.close();
-            if (result.records.length < 1) {
-                res.status(404).send('Not Found');
-                return;
-            }
-            let user = {id: result.records[0].get(0).high, ...result.records[0].get(1).properties};
-            res.status(200).send(JSON.stringify(user));
-        })
+    promise.then((result) => {
+        session.close();
+        if (result.records.length < 1) {
+            res.status(404).send('Not Found');
+            return;
+        }
+        let user = {id: result.records[0].get(0).low, ...result.records[0].get(1).properties};
+        res.status(200).send(JSON.stringify(user));
+    })
         .catch(err => console.log(err));
 
 });
@@ -70,7 +120,7 @@ app.post('/login', (req, res) => {
 
     const session = driver.session();
     let promise = session
-        .run('match (a:Buyer {email: $email, password:$password}) return a limit 20', {
+        .run('match (a:Buyer {email: $email, password:$password}) return id(a),a', {
             email: email,
             password: password
         });
@@ -80,7 +130,7 @@ app.post('/login', (req, res) => {
             res.status(404).send('Not Found');
             return;
         }
-        let user = {...result.records[0].get(0).properties};
+        let user = {id: result.records[0].get(0).low, ...result.records[0].get(1).properties};
         res.status(200).send(JSON.stringify(user));
     })
         .catch(err => console.log(err));
