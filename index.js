@@ -16,7 +16,6 @@ const driver = neo4j.driver(config.DBUrl, neo4j.auth.basic(config.DBUsername, co
 function singleReturn(promise, session, res, del = false) {
     promise.then((result) => {
         session.close();
-        console.log(result);
         if (del) {
             res.status(200).send('Phone deleted');
 
@@ -32,7 +31,7 @@ function singleReturn(promise, session, res, del = false) {
         .catch(err => console.log(err))
 }
 
-function multipleReturn(promise, session, res, prod = false) {
+function multipleReturn(promise, session, res, prod = false, withId = false) {
     promise.then((result) => {
         session.close();
 
@@ -47,6 +46,14 @@ function multipleReturn(promise, session, res, prod = false) {
             });
             res.status(200).send(JSON.stringify(returnArr))
         } else {
+            if(withId){
+                let returnArr = [];
+                result.records.map(result => {
+                    returnArr.push({id:result.get(0).low, ...result.get(1).properties});
+                });
+                res.status(200).send(JSON.stringify(returnArr));
+                return;
+            }
             let returnArr = [];
             result.records.map(result => {
                 returnArr.push(result.get(0).properties);
@@ -64,7 +71,6 @@ app.use('/product-image', express.static('ProductImages'));
 app.post('/admin-login', (req, res) => {
     let password = req.body.password;
     let email = req.body.email;
-    console.log(req.body);
     const session = driver.session();
     let promise = session
         .run('match (a:Admin {email:{email}, password:{password}}) return a', {email, password});
@@ -73,7 +79,6 @@ app.post('/admin-login', (req, res) => {
 
 app.post('/add-phone', (req, res) => {
     const {brand, model, audio, charging, bluetooth, admin} = req.body.phone;
-    console.log(req.body.phone);
     let queryString = 'match (admin:Admin {email:{admin}}), ';
     if (audio) {
         queryString = queryString.concat('(audio:Connector {type:{audio}}), ')
@@ -116,7 +121,6 @@ app.post('/delete-phone', (req, res) => {
         .run(queryString, params);
 
 
-
     singleReturn(promise, session, res, true);
 });
 app.post('/seller-login', (req, res) => {
@@ -130,7 +134,6 @@ app.post('/seller-login', (req, res) => {
 
 app.get('/seller-products', (req, res) => {
     const {seller} = req.query;
-    console.log(seller);
     const queryString = 'match (b:Seller {email:{seller}})-[r:sell]->(a:Product) return a';
     const params = {seller};
 
@@ -142,17 +145,20 @@ app.get('/seller-products', (req, res) => {
 
 });
 
+app.post('/pay', (req, res) => {
+    res.status(200).send('ok');
+});
+
 app.post('/add-product', (req, res) => {
     const {seller, name, price, connector, image} = req.body.product;
-    console.log(req.body);
     let queryString = 'match (s:Seller {name:{seller}}),(c:Connector {type:{connector}}) ';
-    queryString = queryString.concat('merge (s)-[r:sell]->(p:Product {name:{name}, image:{image}, price:{price}}) merge (c)<-[d:connects]-(p) return p');
+    queryString = queryString.concat('merge (s)-[r:sell]->(p:Product {name:{name}, connector:{connector}, image:{image}, price:{price}}) merge (c)<-[d:connects]-(p) return p');
     const params = {seller, name: `${seller} ${name}`, price, connector, image};
 
     const session = driver.session();
-    const promise = session.run(queryString,params);
+    const promise = session.run(queryString, params);
 
-    singleReturn(promise,session,res);
+    singleReturn(promise, session, res);
 });
 
 app.post('/delete-product', (req, res) => {
@@ -162,17 +168,16 @@ app.post('/delete-product', (req, res) => {
     const params = {name};
 
     const session = driver.session();
-    const promise = session.run(queryString,params);
+    const promise = session.run(queryString, params);
     const path = `./ProductImages/${image}`;
     try {
         fs.unlinkSync(path)
         //file removed
-    } catch(err) {
+    } catch (err) {
         console.error(err)
     }
-    singleReturn(promise,session,res, true);
+    singleReturn(promise, session, res, true);
 });
-
 
 
 app.get('/phone-models', (req, res) => {
@@ -252,16 +257,19 @@ app.post('/update', (req, res) => {
     let firstName = req.body.firstName;
     let lastName = req.body.lastName;
     let phone = req.body.phone;
-    let id = req.body.id;
 
+    let queryString = 'match (p:Phone {brand:{brand}, model:{model}}), ';
+    queryString = queryString.concat('(a:Buyer {email:{email}})-[r:owns]->() delete r ');
+    queryString = queryString.concat('set a.firstName={firstName}, a.lastName={lastName}, a.phoneBrand={brand}, a.phoneModel={model} ');
+    queryString = queryString.concat('merge (a)-[:owns]->(p) return a');
     const session = driver.session();
     let promise = session
-        .run('match (a:Buyer {email:{email}) where id(a)={id} set a.firstName={firstName}, a.lastName={lastName}, a.phone={phone} return a', {
-            id,
+        .run(queryString, {
             firstName,
             lastName,
             email,
-            phone
+            brand: phone.brand,
+            model: phone.model
         });
     singleReturn(promise, session, res);
 });
@@ -295,19 +303,38 @@ app.post('/login', (req, res) => {
     singleReturn(promise, session, res);
 });
 
+app.get('/products-for-me', (req, res) => {
+    const {phoneType} = req.query;
+    if(phoneType === 'undefined'){
+        res.send('ok');
+    } else {
+        const phone = JSON.parse(phoneType);
+        const queryString = 'match (p:Phone {model:{model}, brand:{brand}})-->()<-[:connects]-(b:Product) return id(b), b';
+        const params = {
+            brand: phone.brand,
+            model: phone.model,
+        };
+        const session = driver.session();
+        let promise = session
+            .run(queryString, params);
+
+        multipleReturn(promise,session,res, false,true );
+    }
+
+});
 
 const storage = multer.diskStorage({
     destination: function (req, file, cb) {
         cb(null, 'ProductImages')
     },
     filename: function (req, file, cb) {
-        cb(null, file.originalname )
+        cb(null, file.originalname)
     }
 });
 
-const upload = multer({ storage: storage }).single('file');
+const upload = multer({storage: storage}).single('file');
 
-app.post('/upload-product-image',function(req, res) {
+app.post('/upload-product-image', function (req, res) {
 
     upload(req, res, function (err) {
         if (err instanceof multer.MulterError) {
